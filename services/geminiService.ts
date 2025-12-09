@@ -1,7 +1,4 @@
-import { GoogleGenAI } from "@google/genai";
-
-const apiKey = process.env.API_KEY || '';
-const ai = new GoogleGenAI({ apiKey });
+import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 
 /**
  * Sends an image to Gemini to replace the background with a specific color.
@@ -9,11 +6,23 @@ const ai = new GoogleGenAI({ apiKey });
  */
 export const removeImageBackground = async (
   base64Image: string,
-  mimeType: string
+  mimeType: string,
+  useProModel: boolean = false
 ): Promise<string> => {
+  // Initialize client inside function to capture the latest API Key
+  const apiKey = process.env.API_KEY || '';
+  const ai = new GoogleGenAI({ apiKey });
+
+  // Select model based on user tier (Pro Key vs Free)
+  // gemini-3-pro-image-preview: Better instruction following, higher res, requires Key.
+  // gemini-2.5-flash-image: Specialized image editing model. Faster, free, reliable for editing tasks.
+  const modelName = useProModel ? 'gemini-3-pro-image-preview' : 'gemini-2.5-flash-image';
+
+  console.log(`Using model: ${modelName}`);
+
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-image',
+      model: modelName,
       contents: {
         parts: [
           {
@@ -27,11 +36,38 @@ export const removeImageBackground = async (
           },
         ],
       },
+      config: {
+        safetySettings: [
+          {
+            category: HarmCategory.HARM_CATEGORY_HARASSMENT,
+            threshold: HarmBlockThreshold.BLOCK_NONE,
+          },
+          {
+            category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+            threshold: HarmBlockThreshold.BLOCK_NONE,
+          },
+          {
+            category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+            threshold: HarmBlockThreshold.BLOCK_NONE,
+          },
+          {
+            category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+            threshold: HarmBlockThreshold.BLOCK_NONE,
+          },
+        ],
+      },
     });
+
+    // Check for safety blocks explicitly
+    if (response.candidates?.[0]?.finishReason === 'PROHIBITED_CONTENT' || response.candidates?.[0]?.finishReason === 'SAFETY') {
+      throw new Error("SAFETY_BLOCK");
+    }
 
     // Iterate through parts to find the image
     const parts = response.candidates?.[0]?.content?.parts;
     if (!parts) {
+      // Log more info if available
+      console.error("Gemini Response Error", response);
       throw new Error("No content received from Gemini.");
     }
 

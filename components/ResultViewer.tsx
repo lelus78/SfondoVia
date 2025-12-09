@@ -1,15 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Download, RefreshCw, Layers, Grid, Pipette, Sliders } from 'lucide-react';
 import { downloadImage, removeBackgroundDynamic } from '../utils/imageUtils';
-import { RGB } from '../types';
+import { RGB, RemovalPreset } from '../types';
 
 interface ResultViewerProps {
   originalImage: string;
-  rawAiImage: string; // The green screen result from Gemini (base64 raw)
+  rawAiImage: string; // The green (or magenta) screen result
+  preset: RemovalPreset;
   onReset: () => void;
 }
 
-export const ResultViewer: React.FC<ResultViewerProps> = ({ originalImage, rawAiImage, onReset }) => {
+export const ResultViewer: React.FC<ResultViewerProps> = ({ originalImage, rawAiImage, preset, onReset }) => {
   const [viewMode, setViewMode] = useState<'split' | 'single'>('split');
   const [bgClass, setBgClass] = useState('bg-checkerboard');
   
@@ -29,7 +30,7 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({ originalImage, rawAi
       if (!rawAiImage) return;
       setIsProcessing(true);
       try {
-        const result = await removeBackgroundDynamic(rawAiImage, threshold, smoothing, keyColor);
+        const result = await removeBackgroundDynamic(rawAiImage, threshold, smoothing, keyColor, preset);
         if (mounted) {
           setProcessedImage(result);
         }
@@ -40,13 +41,12 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({ originalImage, rawAi
       }
     };
 
-    // Debounce slightly to avoid freezing UI on slide
     const timer = setTimeout(process, 50);
     return () => {
       mounted = false;
       clearTimeout(timer);
     };
-  }, [rawAiImage, threshold, smoothing, keyColor]);
+  }, [rawAiImage, threshold, smoothing, keyColor, preset]);
 
   const handleDownload = () => {
     if (processedImage) {
@@ -57,14 +57,11 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({ originalImage, rawAi
   const handleImageClick = (e: React.MouseEvent<HTMLImageElement>) => {
     if (!isPickingColor) return;
 
-    // We need to get the color of the pixel clicked.
-    // To do this accurately, we draw the clicked image to a temp canvas.
     const img = e.currentTarget;
     const rect = img.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
-    // Calculate natural image coordinates
     const naturalX = (x / rect.width) * img.naturalWidth;
     const naturalY = (y / rect.height) * img.naturalHeight;
 
@@ -76,7 +73,6 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({ originalImage, rawAi
       ctx.drawImage(img, 0, 0);
       const p = ctx.getImageData(naturalX, naturalY, 1, 1).data;
       setKeyColor({ r: p[0], g: p[1], b: p[2] });
-      // Reset to defaults for manual mode usually needs lower threshold
       setThreshold(30); 
       setIsPickingColor(false);
     }
@@ -84,6 +80,8 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({ originalImage, rawAi
 
   const rawDataUrl = `data:image/png;base64,${rawAiImage}`;
   const processedDataUrl = processedImage ? `data:image/png;base64,${processedImage}` : rawDataUrl;
+
+  const autoLabel = preset === 'green' ? 'Auto (Verde)' : 'Auto (Magenta)';
 
   return (
     <div className="w-full max-w-6xl mx-auto space-y-6 animate-fade-in-up">
@@ -136,8 +134,7 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({ originalImage, rawAi
             <button
               onClick={() => {
                 setIsPickingColor(!isPickingColor);
-                if (!isPickingColor) setKeyColor(undefined); // Reset if toggling off? No, keep it. 
-                // Actually, if clicking button, we assume start picking.
+                if (!isPickingColor) setKeyColor(undefined); 
               }}
               className={`w-full flex items-center justify-center gap-2 p-3 rounded-xl border transition-all ${
                 isPickingColor 
@@ -148,7 +145,7 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({ originalImage, rawAi
               }`}
             >
               <Pipette className="w-5 h-5" />
-              {isPickingColor ? 'Clicca sull\'immagine...' : keyColor ? 'Colore Manuale Attivo' : 'Auto (Verde)'}
+              {isPickingColor ? 'Clicca sull\'immagine...' : keyColor ? 'Colore Manuale Attivo' : autoLabel}
             </button>
             {keyColor && (
               <div className="flex items-center gap-2 mt-2">
@@ -160,7 +157,7 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({ originalImage, rawAi
               </div>
             )}
             <p className="text-xs text-slate-500">
-              {isPickingColor ? "Clicca sull'immagine di destra per selezionare il colore esatto dello sfondo." : "Usa la pipetta se l'automatico fallisce."}
+              {isPickingColor ? "Clicca sull'immagine di destra per selezionare il colore esatto dello sfondo." : `Modalità Auto attiva: rimuove il ${preset === 'green' ? 'Verde' : 'Magenta'}.`}
             </p>
           </div>
 
@@ -229,7 +226,7 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({ originalImage, rawAi
         {/* Main Display Area */}
         <div className="lg:col-span-2 space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 h-full">
-            {/* Original (or Hidden in Single Mode) */}
+            {/* Original */}
             {(viewMode === 'split' || viewMode === 'single') && (
                <div className={`relative rounded-2xl overflow-hidden border border-slate-700 bg-slate-800 shadow-lg min-h-[300px] flex flex-col group ${viewMode === 'single' ? 'hidden' : ''}`}>
                 <div className="absolute top-3 left-3 z-10 bg-black/60 backdrop-blur-md px-3 py-1 rounded-full text-xs font-semibold text-white">
@@ -243,16 +240,15 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({ originalImage, rawAi
               </div>
             )}
 
-            {/* Processed (Interactive) */}
+            {/* Processed */}
             <div className={`relative rounded-2xl overflow-hidden border-2 ${isPickingColor ? 'border-indigo-500 shadow-[0_0_20px_rgba(99,102,241,0.3)] cursor-crosshair' : 'border-slate-700'} ${bgClass} shadow-xl min-h-[300px] flex flex-col ${viewMode === 'single' ? 'md:col-span-2' : ''}`}>
               <div className="absolute top-3 left-3 z-10 flex items-center gap-2">
                 <span className={`px-3 py-1 rounded-full text-xs font-semibold text-white shadow-lg backdrop-blur-md ${isPickingColor ? 'bg-indigo-600 animate-pulse' : 'bg-indigo-600/90'}`}>
-                  {isPickingColor ? 'SELEZIONA IL COLORE' : 'Risultato'}
+                  {isPickingColor ? 'SELEZIONA COLORE SFONDO' : 'Risultato'}
                 </span>
                 {isProcessing && <span className="text-xs text-indigo-600 font-bold bg-white/90 px-2 py-1 rounded-full">Elaborazione...</span>}
               </div>
               
-              {/* NOTE: When picking color, we show the RAW image so user can pick the green. When editing, we show PROCESSED. */}
               <img 
                 src={isPickingColor ? rawDataUrl : processedDataUrl} 
                 alt="Processed" 
@@ -267,7 +263,7 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({ originalImage, rawAi
             <p className="flex gap-2">
               <span className="font-bold">💡 Suggerimento:</span>
               <span>
-                Se i bordi sono seghettati, aumenta la <b>Morbidezza</b>. Se rimane troppo alone verde, abbassa la <b>Tolleranza</b> o usa la <b>Pipetta</b> per selezionare la tonalità esatta da rimuovere.
+                Usa la <b>Pipetta</b> se lo sfondo non viene rimosso correttamente. In modalità "Inversione", lo sfondo di default da rimuovere è Magenta, altrimenti è Verde.
               </span>
             </p>
           </div>
