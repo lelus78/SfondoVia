@@ -1,0 +1,5 @@
+{
+  "name": "SfondoVia AI",
+  "description": "Un'applicazione web intelligente per rimuovere o sostituire lo sfondo delle immagini utilizzando l'IA di Google Gemini.",
+  "requestFramePermissions": []
+}
